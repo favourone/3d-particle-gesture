@@ -5,8 +5,6 @@
 
 > 一个基于 Three.js 和 MediaPipe 的纯前端 3D 实时手势交互引擎。无需任何外部穿戴设备，仅通过普通摄像头即可在浏览器中“隔空”操控万千星辰。
 
-*(💡 提示：可以在这里拖拽上传一张你运行网页时的炫酷截图或 GIF 动图，GitHub 会自动将其转为图片链接)*
-
 ## 🔗 在线体验 (Live Demo)
 
 👉 **[点击这里直接在浏览器中运行](https://favourone.github.io/3d-particle-gesture/)** *(⚠️ 注意：本项目完全基于纯前端本地算力运行，请允许浏览器调用摄像头权限。推荐在 PC 端全屏获得最佳沉浸体验。)*
@@ -27,19 +25,20 @@
 
 ## 🚀 本地运行 (Local Development)
 
-由于浏览器对 `getUserMedia` (摄像头调用) 的安全限制，本地运行需开启 HTTP 服务，**请勿直接双击打开 HTML 文件**。
+由于浏览器对 getUserMedia (摄像头调用) 的安全限制，本地运行需开启 HTTP 服务，**请勿直接双击打开 HTML 文件**。
 
 1. 克隆本仓库：
-```bash
-git clone [https://github.com/favourone/3d-particle-gesture.git](https://github.com/favourone/3d-particle-gesture.git)
-使用 VS Code 的 Live Server 插件打开 index.html，或使用 Python 启动本地服务：
 
-Bash
-python -m http.server 3000
-浏览器访问 http://localhost:3000 即可体验。
+    git clone https://github.com/favourone/3d-particle-gesture.git
 
-📝 博客解析
+2. 启动本地服务（使用 Python）：
+
+    python -m http.server 3000
+
+3. 浏览器访问 http://localhost:3000 即可体验。
+
+## 📝 博客解析
+
 详细的开发思路与底层算法拆解（包含径向渐变纹理、加色混合、Lerp 阻尼算法等），请阅读我的技术博客：
-👉 手撕“赛博朋克”级 Web 交互：Three.js + AI 视觉打造隔空手势控制的 3D 粒子系统
-
-如果这个项目对你有启发，或者觉得视觉效果还不错，欢迎点右上角给一个 ⭐️ Star！
+👉 **[手撕“赛博朋克”级 Web 交互：Three.js + AI 视觉打造隔空手势控制的 3D 粒子系统]([https://blog.csdn.net/](https://blog.csdn.net/2501_91104204/article/details/159081389?spm=1001.2014.3001.5502))** ---
+**如果这个项目对你有启发，或者觉得视觉效果还不错，欢迎点右上角给一个 ⭐️ Star！**
