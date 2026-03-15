@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D粒子系统 Pro - 沉浸式手势交互</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #050505 100%);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            color: white;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        .input_video { display: none; }
+        
+        /* 现代极简UI */
+        #ui-layer {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            pointer-events: none;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+        #ui-layer h1 { margin: 0; font-size: 24px; font-weight: 300; letter-spacing: 2px; }
+        #ui-layer p { margin: 8px 0 0; font-size: 14px; opacity: 0.7; }
+        
+        #fullscreen-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            padding: 12px 28px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border-radius: 30px;
+            cursor: pointer;
+            backdrop-filter: blur(12px);
+            font-size: 14px;
+            letter-spacing: 1px;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 100;
+        }
+        #fullscreen-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+        #loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #050505;
+            z-index: 999;
+            transition: opacity 0.8s ease;
+        }
+        .spinner {
+            width: 40px; height: 40px;
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.18.0/dist/lil-gui.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>正在唤醒AI视觉引擎...</div>
+    </div>
+    
+    <div id="ui-layer">
+        <h1>PARTICLE ENGINE</h1>
+        <p>挥动双手移动位置 · 张合双指控制聚散</p>
+    </div>
+
+    <video class="input_video"></video>
+    <div id="canvas-container"></div>
+    <button id="fullscreen-btn">全屏沉浸</button>
+
+    <script>
+        // --- 1. 核心配置 ---
+        const PARTICLE_COUNT = 20000; // 增加粒子数量带来更震撼的视觉
+        let scene, camera, renderer, particles;
+        
+        let targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        let currentPositions = new Float32Array(PARTICLE_COUNT * 3);
+        let colors = new Float32Array(PARTICLE_COUNT * 3); // 颜色数组
+        
+        // 物理缓动参数
+        let handScale = 1.0, targetHandScale = 1.0;
+        let handPos = new THREE.Vector3(0, 0, 0);
+        let targetHandPos = new THREE.Vector3(0, 0, 0);
+
+        const params = {
+            shape: 'galaxy', // 默认星系
+            baseColor: '#00ffff',
+            secondaryColor: '#ff00ff',
+            particleSize: 0.15,
+            spreadSpeed: 0.05 // 降低速度，增加水母般的阻尼感
+        };
+
+        // --- 2. 创建发光柔和纹理 (无需外部图片) ---
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            gradient.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            gradient.addColorStop(1, 'rgba(0,0,0,0)');
+            context.fillStyle = gradient;
+            context.fillRect(0, 0, 64, 64);
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- 3. 初始化 Three.js ---
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050505, 0.015);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 40;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制像素比优化性能
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            const geometry = new THREE.BufferGeometry();
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                currentPositions[i] = (Math.random() - 0.5) * 100; // 初始散开
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: params.particleSize,
+                map: createGlowTexture(), // 使用发光纹理
+                vertexColors: true,       // 启用顶点颜色
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending, // 加色混合产生发光感
+                depthWrite: false
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            generateShape(params.shape);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 4. 形态与颜色生成算法 ---
+        function generateShape(type) {
+            let i3 = 0;
+            const color1 = new THREE.Color(params.baseColor);
+            const color2 = new THREE.Color(params.secondaryColor);
+            const mixedColor = new THREE.Color();
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                let x = 0, y = 0, z = 0;
+                let colorRatio = Math.random(); // 用于颜色渐变
+
+                if (type === 'galaxy') {
+                    // 螺旋星系
+                    const branchCount = 3;
+                    const branch = i % branchCount;
+                    const r = Math.random() * 20;
+                    const theta = r * 0.5 + (branch * Math.PI * 2) / branchCount;
+                    const randomOffset = (Math.random() - 0.5) * (20 - r) * 0.2; // 边缘更散
+                    
+                    x = Math.cos(theta) * r + randomOffset;
+                    y = (Math.random() - 0.5) * (20 - r) * 0.1; // 扁平圆盘
+                    z = Math.sin(theta) * r + randomOffset;
+                    colorRatio = r / 20; // 越往外颜色越变
+                }
+                else if (type === 'heart') {
+                    const t = Math.PI * 2 * Math.random();
+                    const r = Math.random() * 0.4 + 0.6; // 空心感
+                    x = 16 * Math.pow(Math.sin(t), 3) * r;
+                    y = (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * r;
+                    z = (Math.random() - 0.5) * 2;
+                    colorRatio = Math.abs(y) / 15;
+                } 
+                else if (type === 'dna') {
+                    // DNA 双螺旋
+                    const t = (i / PARTICLE_COUNT) * Math.PI * 20;
+                    const strand = i % 2 === 0 ? 1 : -1;
+                    const radius = 4;
+                    x = Math.cos(t + strand * Math.PI) * radius;
+                    y = (t / (Math.PI * 20)) * 40 - 20;
+                    z = Math.sin(t + strand * Math.PI) * radius;
+                    
+                    // 添加连接键
+                    if (Math.random() > 0.8) {
+                        x *= Math.random();
+                        z *= Math.random();
+                    }
+                    colorRatio = (y + 20) / 40;
+                }
+
+                targetPositions[i3] = x;
+                targetPositions[i3+1] = y;
+                targetPositions[i3+2] = z;
+
+                // 混合双色，写入颜色缓冲区
+                mixedColor.lerpColors(color1, color2, colorRatio);
+                colors[i3] = mixedColor.r;
+                colors[i3+1] = mixedColor.g;
+                colors[i3+2] = mixedColor.b;
+
+                i3 += 3;
+            }
+            particles.geometry.attributes.color.needsUpdate = true;
+        }
+
+        // --- 5. UI 控制面板 ---
+        function initGUI() {
+            const gui = new lil.GUI({ title: '视觉引擎参数' });
+            
+            gui.add(params, 'shape', { '螺旋星系': 'galaxy', '爱心波段': 'heart', '双螺旋DNA': 'dna' })
+                .name('全息形态')
+                .onChange(v => generateShape(v));
+
+            const colorFolder = gui.addFolder('色彩搭配');
+            colorFolder.addColor(params, 'baseColor').name('主色调').onChange(() => generateShape(params.shape));
+            colorFolder.addColor(params, 'secondaryColor').name('辅色调').onChange(() => generateShape(params.shape));
+
+            gui.add(params, 'particleSize', 0.05, 0.5).name('光晕大小').onChange(v => {
+                particles.material.size = v;
+            });
+
+            // 全屏
+            const fsBtn = document.getElementById('fullscreen-btn');
+            fsBtn.addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                    fsBtn.innerText = '退出沉浸';
+                } else {
+                    document.exitFullscreen();
+                    fsBtn.innerText = '全屏沉浸';
+                }
+            });
+        }
+
+        // --- 6. AI 视觉手势追踪 ---
+        function initHandTracking() {
+            const videoElement = document.querySelector('.input_video');
+            const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+
+            hands.onResults(results => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    const landmarks = results.multiHandLandmarks[0];
+                    
+                    // 1. 张合控制缩放 (食指8 & 拇指4)
+                    const thumb = landmarks[4], index = landmarks[8];
+                    const distance = Math.sqrt(
+                        Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2) + Math.pow(thumb.z - index.z, 2)
+                    );
+                    targetHandScale = Math.max(0.1, Math.min((distance - 0.02) * 4, 3.0)); 
+
+                    // 2. 手掌中心控制空间位置 (取掌心节点 9)
+                    const palm = landmarks[9];
+                    // 屏幕坐标 (0~1) 映射到 3D 空间坐标 (-20 ~ 20)
+                    // 注意：摄像头画面镜像是反的，所以X轴用 0.5 - palm.x
+                    targetHandPos.x = (0.5 - palm.x) * 40; 
+                    targetHandPos.y = (0.5 - palm.y) * 40; 
+                } else {
+                    targetHandScale = 1.0;
+                    targetHandPos.set(0, 0, 0); // 没手时回到中心
+                }
+            });
+
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => { await hands.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            
+            cameraUtils.start().then(() => {
+                const loading = document.getElementById('loading');
+                loading.style.opacity = '0';
+                setTimeout(() => loading.style.display = 'none', 800);
+            });
+        }
+
+        // --- 7. 渲染循环 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (particles) {
+                // 整体自转
+                particles.rotation.y += 0.003;
+                particles.rotation.z -= 0.001;
+
+                // 物理阻尼插值 (Lerp)
+                handScale += (targetHandScale - handScale) * 0.08;
+                handPos.lerp(targetHandPos, 0.05); // 追随手掌位置
+
+                const positions = particles.geometry.attributes.position.array;
+                for (let i = 0; i < PARTICLE_COUNT * 3; i+=3) {
+                    // 目标局部坐标 * 缩放
+                    const targetX = targetPositions[i] * handScale;
+                    const targetY = targetPositions[i+1] * handScale;
+                    const targetZ = targetPositions[i+2] * handScale;
+
+                    // 加上手掌的全局平移量，实现跟随
+                    const finalX = targetX + handPos.x;
+                    const finalY = targetY + handPos.y;
+                    const finalZ = targetZ + handPos.z;
+
+                    // 弹性趋近
+                    positions[i] += (finalX - positions[i]) * params.spreadSpeed;
+                    positions[i+1] += (finalY - positions[i+1]) * params.spreadSpeed;
+                    positions[i+2] += (finalZ - positions[i+2]) * params.spreadSpeed;
+                }
+                particles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 启动
+        initThree();
+        initGUI();
+        initHandTracking();
+        animate();
+    </script>
+</body>
+</html>
